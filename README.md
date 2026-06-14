@@ -1,4 +1,4 @@
-# Data Masking Policy (Mulesoft Custom Policy)
+# Data Masking Policy (MuleSoft Custom Policy)
 
 ## Data Masking Policy
 

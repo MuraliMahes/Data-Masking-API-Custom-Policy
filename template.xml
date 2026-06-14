@@ -1,0 +1,495 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xmlns:http-policy="http://www.mulesoft.org/schema/mule/http-policy"
+      xmlns:http-transform="http://www.mulesoft.org/schema/mule/http-policy-transform"
+      xsi:schemaLocation="http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+               http://www.mulesoft.org/schema/mule/http-policy http://www.mulesoft.org/schema/mule/http-policy/current/mule-http-policy.xsd
+               http://www.mulesoft.org/schema/mule/http-policy-transform http://www.mulesoft.org/schema/mule/http-policy-transform/current/mule-http-policy-transform.xsd">
+
+
+    <http-policy:proxy name="{{{policyId}}}-custom-policy">
+        <http-policy:source>
+        	<try>
+			
+				<set-variable value="{{{maskingOption}}}" variableName="maskingOption" />
+				<set-variable value="{{{fieldsToMask}}}" variableName="fieldsToMask" />
+				<set-variable value="{{{maskCharacters}}}" variableName="maskCharacters" />
+				<set-variable value="{{{logResponsePayload}}}" variableName="logResponse" />
+        	
+            <http-policy:execute-next/>
+            
+            	<set-variable value="#[output application/json --- payload.^mediaType]"	variableName="mediaType" />
+            	
+            	<choice>
+				<when expression='#[lower(vars.maskingOption) == "x-based"]'>
+					
+					<logger level="INFO" message="Applying Path Based Masking" />
+					
+					<choice>
+						<when
+							expression='#[(vars.mediaType contains "application/xml") or (vars.mediaType contains "text/xml")]'>
+							<set-payload
+								value='#[%dw 2.0
+output application/xml 
+var fields = vars.fieldsToMask 
+var maskChar = vars.maskCharacters default "*******" 
+fun maskFields(inputData, fieldHierarchy: Array, maskChar: String) =
+        if (inputData is Array)
+                inputData map (item) -> maskFields(item,fieldHierarchy,maskChar)
+        else if (inputData is Object)
+                inputData mapObject ((value, key) -> 
+                    if (fieldHierarchy contains key as String)
+                        if (sizeOf(fieldHierarchy) == 1) 
+                            (key): maskChar
+                        else 
+                            (key): maskFields(value, fieldHierarchy[1 to -1],maskChar)
+                    else 
+                        (key): value
+            )
+        else inputData
+
+var splitFields= (fields splitBy ",") map (trim($) splitBy ".") 
+
+var initialIndex= 0 
+
+fun xBasedMasking(inData: Any,initIndex: Number)=
+    if(splitFields != null)
+        if(sizeOf(splitFields) == initIndex) 
+            inData
+        else 
+            xBasedMasking((maskFields(inData,splitFields[initIndex],maskChar)), initIndex+1)
+    else inData
+
+---
+xBasedMasking(payload,initialIndex)]' />
+						</when>
+						
+						<when
+							expression='#[(vars.mediaType contains "application/json") or (vars.mediaType contains "text/json")]'>
+							<set-payload
+								value='#[%dw 2.0
+output application/json 
+var fields = vars.fieldsToMask 
+var maskChar = vars.maskCharacters default "*******" 
+fun maskFields(inputData, fieldHierarchy: Array, maskChar: String) =
+        if (inputData is Array)
+                inputData map (item) -> maskFields(item,fieldHierarchy,maskChar)
+        else if (inputData is Object)
+                inputData mapObject ((value, key) -> 
+                    if (fieldHierarchy contains key as String)
+                        if (sizeOf(fieldHierarchy) == 1) 
+                            (key): maskChar
+                        else 
+                            (key): maskFields(value, fieldHierarchy[1 to -1],maskChar)
+                    else 
+                        (key): value
+            )
+        else inputData
+
+var splitFields= (fields splitBy ",") map (trim($) splitBy ".") 
+
+var initialIndex= 0 
+
+fun xBasedMasking(inData: Any,initIndex: Number)=
+    if(splitFields != null)
+        if(sizeOf(splitFields) == initIndex) 
+            inData
+        else 
+            xBasedMasking((maskFields(inData,splitFields[initIndex],maskChar)), initIndex+1)
+    else inData
+
+---
+xBasedMasking(payload,initialIndex)]' />
+						</when>
+						
+						<when
+							expression='#[(vars.mediaType contains "application/csv") or (vars.mediaType contains "text/csv")]'>
+							<set-payload
+								value='#[%dw 2.0
+import * from dw::util::Values
+output application/csv
+
+var fields = vars.fieldsToMask
+
+var maskChar = vars.maskCharacters default "*******"
+
+var splitFields = fields splitBy "," map trim($)
+
+var initialIndex=0
+
+fun csvMasking(inData,initialIndex)=
+    if(splitFields != null)
+        if(sizeOf(splitFields) == initialIndex) 
+            inData
+        else 
+            csvMasking((inData mask splitFields[initialIndex] with maskChar),initialIndex + 1)
+    else inData
+
+---
+csvMasking(payload,initialIndex)]' />
+						</when>
+						
+						<otherwise>
+							<logger level="DEBUG" />
+						</otherwise>
+						
+					</choice>
+				</when>
+				
+				<when expression='#[lower(vars.maskingOption) == "generic"]'>
+				
+					<logger level="INFO" message="Applying Generic Masking" />
+					
+					<choice>
+					
+						<when
+							expression='#[(vars.mediaType contains "application/xml") or (vars.mediaType contains "text/xml")]'>
+							<set-payload
+								value='#[%dw 2.0
+output application/xml
+var fields = vars.fieldsToMask
+var maskChar = vars.maskCharacters default "*******"
+var maskFields = (fields splitBy ",") map trim($)
+fun genericMasking(value) =  typeOf(value) 
+match {    
+    case array: "Array" ->  
+					if ((typeOf((value map ($))[0])) as String != "Object") 
+						(value)              
+					else 
+						((value) map ObjectLevelMasking($))    
+    case string: "String" -> (value)    
+    case obj: "Object" -> ObjectLevelMasking(value)    
+    else -> value  
+    }
+    
+fun ObjectLevelMasking(val) =  val mapObject ((value, key, index) ->    
+    if (!isEmpty(maskFields filter (($) == key as String)))                
+		(filterKeys(key)): maskChar   
+    else 
+		(filterKeys(key)): genericMasking(value)  )
+    
+fun filterKeys(key) =  
+    if (!isEmpty(maskFields filter (($) == key as String)))    
+		((maskFields filter (($) == key as String))[0])  
+    else 
+		(key)
+---
+genericMasking(payload)]' />
+						</when>
+						<when
+							expression='#[(vars.mediaType contains "application/json") or (vars.mediaType contains "text/json")]'>
+							<set-payload
+								value='#[%dw 2.0
+output application/json
+var fields = vars.fieldsToMask
+var maskChar = vars.maskCharacters default "*******"
+var maskFields = (fields splitBy ",") map trim($)
+fun genericMasking(value) =  typeOf(value) 
+match {    
+    case array: "Array" ->  
+					if ((typeOf((value map ($))[0])) as String != "Object") 
+						(value)              
+					else 
+						((value) map ObjectLevelMasking($))    
+    case string: "String" -> (value)    
+    case obj: "Object" -> ObjectLevelMasking(value)    
+    else -> value  
+    }
+    
+fun ObjectLevelMasking(val) =  val mapObject ((value, key, index) ->    
+    if (!isEmpty(maskFields filter (($) == key as String)))                
+		(filterKeys(key)): maskChar   
+    else 
+		(filterKeys(key)): genericMasking(value)  )
+    
+fun filterKeys(key) =  
+    if (!isEmpty(maskFields filter (($) == key as String)))    
+		((maskFields filter (($) == key as String))[0])  
+    else 
+		(key)
+---
+genericMasking(payload)]' />
+						</when>
+						
+						<when
+							expression='#[(vars.mediaType contains "application/csv") or (vars.mediaType contains "text/csv")]'>
+							<set-payload
+								value='#[%dw 2.0
+import * from dw::util::Values
+output application/csv
+
+var fields = vars.fieldsToMask
+
+var maskChar = vars.maskCharacters default "*******"
+
+var splitFields = fields splitBy "," map trim($)
+
+var initialIndex=0
+
+fun csvMasking(inData,initialIndex)=
+    if(splitFields != null)
+        if(sizeOf(splitFields) == initialIndex) 
+            inData
+        else 
+            csvMasking((inData mask splitFields[initialIndex] with maskChar),initialIndex + 1)
+    else inData
+
+---
+csvMasking(payload,initialIndex)]' />
+						</when>
+						<otherwise>
+							<logger level="DEBUG" />
+						</otherwise>
+					</choice>
+				</when>
+			</choice>
+			
+			<choice>
+				<when expression='#[vars.logResponse == "yesToLogs"]'>
+					<logger level="INFO" message="#[payload]"/>
+				</when>
+			</choice>
+			
+			<error-handler>
+				<on-error-propagate type= "ANY" logException="true">
+					
+					<set-variable value="#[output application/json --- payload.^mediaType]"	variableName="dataType" />
+            	
+            	<choice>
+				<when expression='#[lower(vars.maskingOption) == "x-based"]'>
+					
+					<logger level="INFO" message="Applying Path Based Masking over Error Response Payload" />
+					
+					<choice>
+						<when
+							expression='#[(vars.dataType contains "application/xml") or (vars.dataType contains "text/xml")]'>
+							<set-payload
+								value='#[%dw 2.0
+output application/xml 
+var fields = vars.fieldsToMask 
+var maskChar = vars.maskCharacters default "*******" 
+fun maskFields(inputData, fieldHierarchy: Array, maskChar: String) =
+        if (inputData is Array)
+                inputData map (item) -> maskFields(item,fieldHierarchy,maskChar)
+        else if (inputData is Object)
+                inputData mapObject ((value, key) -> 
+                    if (fieldHierarchy contains key as String)
+                        if (sizeOf(fieldHierarchy) == 1) 
+                            (key): maskChar
+                        else 
+                            (key): maskFields(value, fieldHierarchy[1 to -1],maskChar)
+                    else 
+                        (key): value
+            )
+        else inputData
+
+var splitFields= (fields splitBy ",") map (trim($) splitBy ".") 
+
+var initialIndex= 0 
+
+fun xBasedMasking(inData: Any,initIndex: Number)=
+    if(splitFields != null)
+        if(sizeOf(splitFields) == initIndex) 
+            inData
+        else 
+            xBasedMasking((maskFields(inData,splitFields[initIndex],maskChar)), initIndex+1)
+    else inData
+
+---
+xBasedMasking(payload,initialIndex)]' />
+						</when>
+						
+						<when
+							expression='#[(vars.dataType contains "application/json") or (vars.dataType contains "text/json")]'>
+							<set-payload
+								value='#[%dw 2.0
+output application/json 
+var fields = vars.fieldsToMask 
+var maskChar = vars.maskCharacters default "*******" 
+fun maskFields(inputData, fieldHierarchy: Array, maskChar: String) =
+        if (inputData is Array)
+                inputData map (item) -> maskFields(item,fieldHierarchy,maskChar)
+        else if (inputData is Object)
+                inputData mapObject ((value, key) -> 
+                    if (fieldHierarchy contains key as String)
+                        if (sizeOf(fieldHierarchy) == 1) 
+                            (key): maskChar
+                        else 
+                            (key): maskFields(value, fieldHierarchy[1 to -1],maskChar)
+                    else 
+                        (key): value
+            )
+        else inputData
+
+var splitFields= (fields splitBy ",") map (trim($) splitBy ".") 
+
+var initialIndex= 0 
+
+fun xBasedMasking(inData: Any,initIndex: Number)=
+    if(splitFields != null)
+        if(sizeOf(splitFields) == initIndex) 
+            inData
+        else 
+            xBasedMasking((maskFields(inData,splitFields[initIndex],maskChar)), initIndex+1)
+    else inData
+
+---
+xBasedMasking(payload,initialIndex)]' />
+						</when>
+						
+						<when
+							expression='#[(vars.dataType contains "application/csv") or (vars.dataType contains "text/csv")]'>
+							<set-payload
+								value='#[%dw 2.0
+import * from dw::util::Values
+output application/csv
+
+var fields = vars.fieldsToMask
+
+var maskChar = vars.maskCharacters default "*******"
+
+var splitFields = fields splitBy "," map trim($)
+
+var initialIndex=0
+
+fun csvMasking(inData,initialIndex)=
+    if(splitFields != null)
+        if(sizeOf(splitFields) == initialIndex) 
+            inData
+        else 
+            csvMasking((inData mask splitFields[initialIndex] with maskChar),initialIndex + 1)
+    else inData
+
+---
+csvMasking(payload,initialIndex)]' />
+						</when>
+						
+						<otherwise>
+							<logger level="DEBUG" />
+						</otherwise>
+						
+					</choice>
+				</when>
+				
+				<when expression='#[lower(vars.maskingOption) == "generic"]'>
+				
+					<logger level="INFO" message="Applying Generic Masking over Error Response Payload" />
+					
+					<choice>
+					
+						<when
+							expression='#[(vars.dataType contains "application/xml") or (vars.dataType contains "text/xml")]'>
+							<set-payload
+								value='#[%dw 2.0
+output application/xml
+var fields = vars.fieldsToMask
+var maskChar = vars.maskCharacters default "*******"
+var maskFields = (fields splitBy ",") map trim($)
+fun genericMasking(value) =  typeOf(value) 
+match {    
+    case array: "Array" ->  
+					if ((typeOf((value map ($))[0])) as String != "Object") 
+						(value)              
+					else 
+						((value) map ObjectLevelMasking($))    
+    case string: "String" -> (value)    
+    case obj: "Object" -> ObjectLevelMasking(value)    
+    else -> value  
+    }
+    
+fun ObjectLevelMasking(val) =  val mapObject ((value, key, index) ->    
+    if (!isEmpty(maskFields filter (($) == key as String)))                
+		(filterKeys(key)): maskChar   
+    else 
+		(filterKeys(key)): genericMasking(value)  )
+    
+fun filterKeys(key) =  
+    if (!isEmpty(maskFields filter (($) == key as String)))    
+		((maskFields filter (($) == key as String))[0])  
+    else 
+		(key)
+---
+genericMasking(payload)]' />
+						</when>
+						<when
+							expression='#[(vars.dataType contains "application/json") or (vars.dataType contains "text/json")]'>
+							<set-payload
+								value='#[%dw 2.0
+output application/json
+var fields = vars.fieldsToMask
+var maskChar = vars.maskCharacters default "*******"
+var maskFields = (fields splitBy ",") map trim($)
+fun genericMasking(value) =  typeOf(value) 
+match {    
+    case array: "Array" ->  
+					if ((typeOf((value map ($))[0])) as String != "Object") 
+						(value)              
+					else 
+						((value) map ObjectLevelMasking($))    
+    case string: "String" -> (value)    
+    case obj: "Object" -> ObjectLevelMasking(value)    
+    else -> value  
+    }
+    
+fun ObjectLevelMasking(val) =  val mapObject ((value, key, index) ->    
+    if (!isEmpty(maskFields filter (($) == key as String)))                
+		(filterKeys(key)): maskChar   
+    else 
+		(filterKeys(key)): genericMasking(value)  )
+    
+fun filterKeys(key) =  
+    if (!isEmpty(maskFields filter (($) == key as String)))    
+		((maskFields filter (($) == key as String))[0])  
+    else 
+		(key)
+---
+genericMasking(payload)]' />
+						</when>
+						
+						<when
+							expression='#[(vars.dataType contains "application/csv") or (vars.dataType contains "text/csv")]'>
+							<set-payload
+								value='#[%dw 2.0
+import * from dw::util::Values
+output application/csv
+
+var fields = vars.fieldsToMask
+
+var maskChar = vars.maskCharacters default "*******"
+
+var splitFields = fields splitBy "," map trim($)
+
+var initialIndex=0
+
+fun csvMasking(inData,initialIndex)=
+    if(splitFields != null)
+        if(sizeOf(splitFields) == initialIndex) 
+            inData
+        else 
+            csvMasking((inData mask splitFields[initialIndex] with maskChar),initialIndex + 1)
+    else inData
+
+---
+csvMasking(payload,initialIndex)]' />
+						</when>
+						<otherwise>
+							<logger level="DEBUG" />
+						</otherwise>
+					</choice>
+				</when>
+			</choice>
+			
+			<choice>
+				<when expression='#[vars.logResponse == "yesToLogs"]'>
+					<logger level="INFO" message="#[payload]"/>
+				</when>
+			</choice>
+				
+				</on-error-propagate>
+			</error-handler>
+
+		</try>
+        </http-policy:source>
+    </http-policy:proxy>
+</mule>

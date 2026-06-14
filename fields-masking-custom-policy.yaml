@@ -1,0 +1,49 @@
+id: Field(s) Masking
+name: Field(s) Masking
+description: Protects/Masks the sensitive field values in the response payload at the proxy/gateway level.
+category: Custom
+type: custom
+resourceLevelSupported: true
+encryptionSupported: false
+standalone: true
+requiredCharacteristics: []
+providedCharacteristics: []
+configuration:
+  - propertyName: maskingOption
+    name: Masking Option
+    description: Select any one of the available masking patterns.
+    type: radio
+    options:
+      - name: Generic Masking
+        value: generic
+      - name: Path Based Masking
+        value: x-based
+    optional: false
+    
+  - propertyName: fieldsToMask
+    name: Fields to Mask
+    description: |
+          Define the fields to be masked in comma(,) separated format. 
+          * GENERIC MASKING -> name, email, address, etc...
+          * PATH BASED MASKING -> salary, contact.work.phone, projects.experience, etc... 
+    type: string
+    optional: false
+    
+  - propertyName: maskCharacters
+    name: Masking Characters
+    description: Below Characters/String will be used as a replacement value for the fields which are subjected to Mask.
+    type: String
+    optional: false
+    defaultValue: "*******"
+    
+  - propertyName: logResponsePayload
+    name: Log Masked Response
+    description: Opt 'Yes' if the masked response payload to be logged.
+    type: radio
+    options:
+      - name: 'Yes'
+        value: yesToLogs
+      - name: 'No'
+        value: noToLogs
+    optional: false
+    
